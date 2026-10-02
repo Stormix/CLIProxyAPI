@@ -2,6 +2,7 @@ package cliproxy
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,13 +31,19 @@ type routingRuntimeState struct {
 	sessionAffinityTTL       time.Duration
 	sessionAffinitySubagents bool
 	soonestReset             coreauth.SoonestResetConfig
+	// sessionAffinityPersistPath is the snapshot file path; empty disables persistence.
+	sessionAffinityPersistPath     string
+	sessionAffinityScope           coreauth.SessionAffinityScope
+	sessionAffinityReturnHome      bool
+	sessionAffinityReturnHomeAfter time.Duration
 }
 
 func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 	state := routingRuntimeState{
-		strategy:                 "round-robin",
-		sessionAffinityTTL:       time.Hour,
-		sessionAffinitySubagents: true,
+		strategy:                       "round-robin",
+		sessionAffinityTTL:             time.Hour,
+		sessionAffinitySubagents:       true,
+		sessionAffinityReturnHomeAfter: 10 * time.Minute,
 	}
 	if cfg == nil {
 		return state
@@ -62,6 +69,18 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 	}
 	if state.sessionAffinity && cfg.Routing.SessionAffinitySubagents != nil {
 		state.sessionAffinitySubagents = *cfg.Routing.SessionAffinitySubagents
+	}
+	if state.sessionAffinity && cfg.Routing.SessionAffinityPersist {
+		if authDir := strings.TrimSpace(cfg.AuthDir); authDir != "" {
+			state.sessionAffinityPersistPath = filepath.Join(authDir, coreauth.SessionAffinitySnapshotFileName)
+		}
+	}
+	state.sessionAffinityScope = coreauth.ParseSessionAffinityScope(cfg.Routing.SessionAffinityScope)
+	state.sessionAffinityReturnHome = state.sessionAffinity && cfg.Routing.SessionAffinityReturnHome
+	if after := strings.TrimSpace(cfg.Routing.SessionAffinityReturnHomeAfter); after != "" {
+		if parsed, errParse := time.ParseDuration(after); errParse == nil && parsed > 0 {
+			state.sessionAffinityReturnHomeAfter = parsed
+		}
 	}
 	return state
 }
@@ -98,6 +117,10 @@ func newRoutingSelector(state routingRuntimeState) coreauth.Selector {
 			Fallback:         selector,
 			TTL:              state.sessionAffinityTTL,
 			SubagentAffinity: &subagents,
+			PersistPath:      state.sessionAffinityPersistPath,
+			Scope:            state.sessionAffinityScope,
+			ReturnHome:       state.sessionAffinityReturnHome,
+			ReturnHomeAfter:  state.sessionAffinityReturnHomeAfter,
 		})
 	}
 	return selector
@@ -235,6 +258,12 @@ func (s *Service) applyManagerConfig(ctx context.Context, commit configCommit) b
 	}
 	routingState := normalizedRoutingRuntimeState(commit.cfg)
 	if s.appliedRoutingState == nil || *s.appliedRoutingState != routingState {
+		if s.appliedRoutingState != nil && s.appliedRoutingState.sessionAffinityPersistPath != "" {
+			// Flush the outgoing selector before the replacement loads the snapshot.
+			if stoppable, ok := s.coreManager.Selector().(coreauth.StoppableSelector); ok {
+				stoppable.Stop()
+			}
+		}
 		s.coreManager.SetSelector(newRoutingSelector(routingState))
 		s.appliedRoutingState = &routingState
 	}

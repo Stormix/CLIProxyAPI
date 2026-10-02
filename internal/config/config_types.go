@@ -374,6 +374,27 @@ type RoutingConfig struct {
 	// When false, subagents are distributed across the credential pool via the fallback selector.
 	// Default: true. Ignored when SessionAffinity is false.
 	SessionAffinitySubagents *bool `yaml:"session-affinity-subagents,omitempty" json:"session-affinity-subagents,omitempty"`
+
+	// SessionAffinityPersist snapshots session-to-auth bindings to <auth-dir>/session-affinity.json
+	// periodically and on shutdown, and restores them on startup or selector rebuild so that
+	// restarts and config reloads do not scatter established sessions across credentials.
+	// Default: false. Ignored when SessionAffinity is false.
+	SessionAffinityPersist bool `yaml:"session-affinity-persist,omitempty" json:"session-affinity-persist,omitempty"`
+
+	// SessionAffinityScope controls the granularity of session bindings.
+	// "session-model" (default) binds each session+model pair independently;
+	// "session" binds a session to one credential regardless of the requested model.
+	SessionAffinityScope string `yaml:"session-affinity-scope,omitempty" json:"session-affinity-scope,omitempty"`
+
+	// SessionAffinityReturnHome remembers the original ("home") credential when a session
+	// fails over to another credential and re-binds to it once it is available again and the
+	// session has been idle on the failover credential for SessionAffinityReturnHomeAfter.
+	// Default: false. Ignored when SessionAffinity is false.
+	SessionAffinityReturnHome bool `yaml:"session-affinity-return-home,omitempty" json:"session-affinity-return-home,omitempty"`
+
+	// SessionAffinityReturnHomeAfter is the minimum idle time on the failover credential before
+	// a session returns to its home credential. Default: 10m.
+	SessionAffinityReturnHomeAfter string `yaml:"session-affinity-return-home-after,omitempty" json:"session-affinity-return-home-after,omitempty"`
 }
 
 // SoonestResetRoutingConfig configures the "soonest-reset" routing strategy, which sends
