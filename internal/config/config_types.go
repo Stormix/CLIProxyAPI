@@ -217,6 +217,10 @@ type CodexConfig struct {
 	// ResponseSteering enables full-duplex Codex WebSockets, bound to one
 	// upstream model/account/socket for their entire lifetime. Default is false.
 	ResponseSteering bool `yaml:"response-steering" json:"response-steering"`
+	// WebsocketsForHTTPClients routes HTTP/SSE downstream requests over the Codex
+	// Responses WebSocket transport when the selected auth enables websockets.
+	// Default is false (websockets are used only for websocket downstream clients).
+	WebsocketsForHTTPClients bool `yaml:"websockets-for-http-clients" json:"websockets-for-http-clients"`
 }
 
 // DefaultCodexStreamBootstrapTimeout is the default maximum duration to buffer bootstrap events.

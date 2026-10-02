@@ -860,6 +860,11 @@ oauth:
       # Experimental full-duplex Codex Responses WebSocket steering (default: false).
       # Keeps one upstream account/model per socket; accepted input is never replayed.
       response-steering: false
+      # Route HTTP/SSE clients (Claude Code, OpenCode, T3 Code, ...) over the upstream Codex Responses
+      # WebSocket transport when the selected auth enables websockets ("websockets": true in the
+      # auth file). Requests fall back to HTTP when the websocket is unusable (policy close,
+      # connection limit, upgrade required). Default: false (websocket upstream only for websocket clients).
+      websockets-for-http-clients: false
       # Disable forcing the official Codex User-Agent and Originator headers on HTTP/SSE and WebSocket requests.
       disable-codex-cloaking: false
       # Hold back the frames that carry nothing the client has seen - the handshake (response.created,

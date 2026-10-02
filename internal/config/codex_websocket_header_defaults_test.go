@@ -87,3 +87,32 @@ codex:
 		t.Fatalf("default ModelLevelCooling = true, want false")
 	}
 }
+
+func TestLoadConfigOptional_CodexWebsocketsForHTTPClients(t *testing.T) {
+	for name, configYAML := range map[string]string{
+		"legacy": "codex:\n  websockets-for-http-clients: true\n",
+		"v8":     "oauth:\n  providers:\n    codex:\n      websockets-for-http-clients: true\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(configPath, []byte(configYAML), 0o600); err != nil {
+				t.Fatalf("failed to write config: %v", err)
+			}
+			cfg, err := LoadConfigOptional(configPath, false)
+			if err != nil {
+				t.Fatalf("LoadConfigOptional() error = %v", err)
+			}
+			if !cfg.Codex.WebsocketsForHTTPClients {
+				t.Fatal("WebsocketsForHTTPClients = false, want true")
+			}
+		})
+	}
+
+	defaultCfg, errDefault := ParseConfigBytes([]byte(`{}`))
+	if errDefault != nil {
+		t.Fatalf("ParseConfigBytes() error = %v", errDefault)
+	}
+	if defaultCfg.Codex.WebsocketsForHTTPClients {
+		t.Fatal("default WebsocketsForHTTPClients = true, want false")
+	}
+}
