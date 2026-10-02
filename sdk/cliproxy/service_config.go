@@ -29,6 +29,7 @@ type routingRuntimeState struct {
 	sessionAffinity          bool
 	sessionAffinityTTL       time.Duration
 	sessionAffinitySubagents bool
+	soonestReset             coreauth.SoonestResetConfig
 }
 
 func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
@@ -46,6 +47,9 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 		state.strategy = "weighted-round-robin"
 	case "fill-first", "fillfirst", "ff":
 		state.strategy = "fill-first"
+	case "soonest-reset", "soonestreset", "sr":
+		state.strategy = "soonest-reset"
+		state.soonestReset = normalizedSoonestResetConfig(cfg.Routing.SoonestReset)
 	}
 	state.sessionAffinity = cfg.Routing.SessionAffinity
 	if ttl := strings.TrimSpace(cfg.Routing.SessionAffinityTTL); ttl != "" {
@@ -62,6 +66,20 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 	return state
 }
 
+func normalizedSoonestResetConfig(cfg config.SoonestResetRoutingConfig) coreauth.SoonestResetConfig {
+	state := coreauth.SoonestResetConfig{
+		Window:             strings.ToLower(strings.TrimSpace(cfg.Window)),
+		SkipExhaustedAbove: cfg.SkipExhaustedAbove,
+		UnknownPolicy:      strings.ToLower(strings.TrimSpace(cfg.UnknownPolicy)),
+	}
+	if raw := strings.TrimSpace(cfg.StaleAfter); raw != "" {
+		if parsed, errParse := time.ParseDuration(raw); errParse == nil && parsed > 0 {
+			state.StaleAfter = parsed
+		}
+	}
+	return state
+}
+
 func newRoutingSelector(state routingRuntimeState) coreauth.Selector {
 	var selector coreauth.Selector
 	switch state.strategy {
@@ -69,6 +87,8 @@ func newRoutingSelector(state routingRuntimeState) coreauth.Selector {
 		selector = &coreauth.WeightedRoundRobinSelector{}
 	case "fill-first":
 		selector = &coreauth.FillFirstSelector{}
+	case "soonest-reset":
+		selector = coreauth.NewSoonestResetSelector(state.soonestReset)
 	default:
 		selector = &coreauth.RoundRobinSelector{}
 	}

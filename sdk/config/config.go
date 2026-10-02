@@ -19,6 +19,7 @@ type DiscoveryConfig = internalconfig.DiscoveryConfig
 type DiscoveryInterfacesConfig = internalconfig.DiscoveryInterfacesConfig
 type RemoteManagement = internalconfig.RemoteManagement
 type OAuthModelAlias = internalconfig.OAuthModelAlias
+type SoonestResetRoutingConfig = internalconfig.SoonestResetRoutingConfig
 type OAuthModelSetting = internalconfig.OAuthModelSetting
 type PayloadConfig = internalconfig.PayloadConfig
 type PayloadRule = internalconfig.PayloadRule
