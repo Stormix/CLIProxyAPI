@@ -351,8 +351,11 @@ type QuotaExceeded struct {
 // RoutingConfig configures how credentials are selected for requests.
 type RoutingConfig struct {
 	// Strategy selects the credential selection strategy.
-	// Supported values: "round-robin" (default), "weighted-round-robin", "fill-first".
+	// Supported values: "round-robin" (default), "weighted-round-robin", "fill-first", "soonest-reset".
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
+
+	// SoonestReset tunes the "soonest-reset" strategy. Ignored for other strategies.
+	SoonestReset SoonestResetRoutingConfig `yaml:"soonest-reset,omitempty" json:"soonest-reset,omitempty"`
 
 	// SessionAffinity enables universal session-sticky routing for all clients.
 	// Explicit Claude Code, Codex, OpenCode, and pi session headers are preferred,
@@ -371,6 +374,30 @@ type RoutingConfig struct {
 	// When false, subagents are distributed across the credential pool via the fallback selector.
 	// Default: true. Ignored when SessionAffinity is false.
 	SessionAffinitySubagents *bool `yaml:"session-affinity-subagents,omitempty" json:"session-affinity-subagents,omitempty"`
+}
+
+// SoonestResetRoutingConfig configures the "soonest-reset" routing strategy, which sends
+// cold picks to the credential whose rate-limit window resets soonest based on the quota
+// headers observed on upstream responses.
+type SoonestResetRoutingConfig struct {
+	// Window selects which quota window drives ordering.
+	// "auto" (default) uses the window closest to exhaustion; "primary" the Codex primary
+	// or Claude 5h window; "secondary" the Codex secondary or Claude 7d window. Codex plans
+	// with a single weekly limit report it as the primary window.
+	Window string `yaml:"window,omitempty" json:"window,omitempty"`
+
+	// SkipExhaustedAbove is the used-percent at or above which a window is considered
+	// exhausted; such credentials are ordered last. Default: 95.
+	SkipExhaustedAbove float64 `yaml:"skip-exhausted-above,omitempty" json:"skip-exhausted-above,omitempty"`
+
+	// StaleAfter ignores quota signals older than this duration and treats the
+	// credential as unknown. Default: 30m. Accepts duration strings like "15m", "1h".
+	StaleAfter string `yaml:"stale-after,omitempty" json:"stale-after,omitempty"`
+
+	// UnknownPolicy places credentials without a usable reset signal.
+	// "probe" (default) tries them first, round-robin, so their headers get captured;
+	// "last" tries them only after every credential with a known reset.
+	UnknownPolicy string `yaml:"unknown-policy,omitempty" json:"unknown-policy,omitempty"`
 }
 
 // OAuthModelAlias defines a model ID alias for a specific channel.

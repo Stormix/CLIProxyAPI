@@ -71,6 +71,23 @@ func weightedSelectorStateModel(ctx context.Context, availabilityModel string) s
 // rolling-window subscription caps (e.g. chat message limits).
 type FillFirstSelector struct{}
 
+// SoonestResetSelector sends cold picks to the credential whose rate-limit window resets
+// soonest, so quota that is about to be refreshed is spent before it is lost. Ordering is
+// derived from the passive quota signals already captured on each credential (see
+// effectiveReset); it never changes which credentials are available.
+type SoonestResetSelector struct {
+	cfg SoonestResetConfig
+
+	mu         sync.Mutex
+	lastProbed map[string]string
+}
+
+// NewSoonestResetSelector constructs a SoonestResetSelector, applying defaults for any
+// zero-valued configuration field.
+func NewSoonestResetSelector(cfg SoonestResetConfig) *SoonestResetSelector {
+	return &SoonestResetSelector{cfg: cfg.normalized()}
+}
+
 type blockReason int
 
 const (
@@ -818,6 +835,118 @@ func (s *FillFirstSelector) Pick(ctx context.Context, provider, model string, op
 	}
 	available = preferCodexWebsocketAuths(ctx, provider, available)
 	return available[0], nil
+}
+
+type soonestResetCandidate struct {
+	auth        *Auth
+	resetAt     time.Time
+	usedPercent float64
+	known       bool
+	exhausted   bool
+}
+
+// Pick orders the available credentials by effective reset time and returns the first.
+//
+// Ordering: credentials with a fresh, known reset ascend by resetAt; credentials without a
+// usable reset go first (unknown-policy probe, rotated so each gets used once and its
+// headers captured) or after the known set (unknown-policy last); credentials whose
+// binding window is already exhausted always come last. Ties break on auth ID.
+func (s *SoonestResetSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
+	_ = opts
+	now := time.Now()
+	available, err := getSelectorAvailableAuths(ctx, auths, provider, model, now)
+	if err != nil {
+		return nil, err
+	}
+	available = preferCodexWebsocketAuths(ctx, provider, available)
+	cfg := s.cfg.normalized()
+
+	candidates := make([]soonestResetCandidate, 0, len(available))
+	unknownCount := 0
+	for _, auth := range available {
+		resetAt, usedPercent, known := effectiveReset(auth, model, cfg, now)
+		candidate := soonestResetCandidate{auth: auth, resetAt: resetAt, usedPercent: usedPercent, known: known}
+		if !known {
+			candidate.exhausted = usedPercent >= cfg.SkipExhaustedAbove
+			if !candidate.exhausted {
+				unknownCount++
+			}
+		}
+		candidates = append(candidates, candidate)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return soonestResetLess(candidates[i], candidates[j], cfg)
+	})
+
+	picked := candidates[0]
+	if !picked.known && !picked.exhausted && cfg.UnknownPolicy == SoonestResetUnknownProbe && unknownCount > 1 {
+		picked = s.rotateUnknown(provider, model, candidates[:unknownCount])
+	}
+
+	if log.IsLevelEnabled(log.DebugLevel) {
+		fields := log.Fields{
+			"provider":     provider,
+			"model":        model,
+			"auth_id":      picked.auth.ID,
+			"known":        picked.known,
+			"used_percent": picked.usedPercent,
+			"candidates":   len(candidates),
+			"unknown":      unknownCount,
+		}
+		if picked.known || picked.exhausted {
+			fields["reset_at"] = picked.resetAt.UTC().Format(time.RFC3339)
+			fields["reset_in"] = picked.resetAt.Sub(now).Round(time.Second).String()
+		}
+		log.WithFields(fields).Debug("soonest-reset selector picked credential")
+	}
+	return picked.auth, nil
+}
+
+// soonestResetLess defines the pick order: unknown-first when probing, then known by
+// reset time, then unknown (when last), then exhausted. Ties fall back to auth ID.
+func soonestResetLess(a, b soonestResetCandidate, cfg SoonestResetConfig) bool {
+	ra, rb := soonestResetRank(a, cfg), soonestResetRank(b, cfg)
+	if ra != rb {
+		return ra < rb
+	}
+	if (a.known || a.exhausted) && !a.resetAt.Equal(b.resetAt) {
+		return a.resetAt.Before(b.resetAt)
+	}
+	return a.auth.ID < b.auth.ID
+}
+
+func soonestResetRank(c soonestResetCandidate, cfg SoonestResetConfig) int {
+	switch {
+	case c.exhausted:
+		return 3
+	case c.known:
+		return 1
+	case cfg.UnknownPolicy == SoonestResetUnknownProbe:
+		return 0
+	default:
+		return 2
+	}
+}
+
+// rotateUnknown round-robins across the ID-sorted unknown candidates so a probe touches
+// each credential once instead of repeatedly hitting the lowest ID.
+func (s *SoonestResetSelector) rotateUnknown(provider, model string, unknown []soonestResetCandidate) soonestResetCandidate {
+	ids := make([]*Auth, len(unknown))
+	for i := range unknown {
+		ids[i] = unknown[i].auth
+	}
+	key := provider + ":" + canonicalModelKey(model)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastProbed == nil {
+		s.lastProbed = make(map[string]string)
+	}
+	if _, ok := s.lastProbed[key]; !ok && len(s.lastProbed) >= 4096 {
+		s.lastProbed = make(map[string]string)
+	}
+	picked := unknown[successorIndex(ids, s.lastProbed[key])]
+	s.lastProbed[key] = picked.auth.ID
+	return picked
 }
 
 func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, blockReason, time.Time) {
