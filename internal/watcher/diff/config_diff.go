@@ -185,6 +185,18 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if oldCfg.Routing.Strategy != newCfg.Routing.Strategy {
 		changes = append(changes, fmt.Sprintf("routing.strategy: %s -> %s", oldCfg.Routing.Strategy, newCfg.Routing.Strategy))
 	}
+	if oldCfg.Routing.SessionAffinityPersist != newCfg.Routing.SessionAffinityPersist {
+		changes = append(changes, fmt.Sprintf("routing.session-affinity-persist: %t -> %t", oldCfg.Routing.SessionAffinityPersist, newCfg.Routing.SessionAffinityPersist))
+	}
+	if oldCfg.Routing.SessionAffinityScope != newCfg.Routing.SessionAffinityScope {
+		changes = append(changes, fmt.Sprintf("routing.session-affinity-scope: %s -> %s", oldCfg.Routing.SessionAffinityScope, newCfg.Routing.SessionAffinityScope))
+	}
+	if oldCfg.Routing.SessionAffinityReturnHome != newCfg.Routing.SessionAffinityReturnHome {
+		changes = append(changes, fmt.Sprintf("routing.session-affinity-return-home: %t -> %t", oldCfg.Routing.SessionAffinityReturnHome, newCfg.Routing.SessionAffinityReturnHome))
+	}
+	if oldCfg.Routing.SessionAffinityReturnHomeAfter != newCfg.Routing.SessionAffinityReturnHomeAfter {
+		changes = append(changes, fmt.Sprintf("routing.session-affinity-return-home-after: %s -> %s", oldCfg.Routing.SessionAffinityReturnHomeAfter, newCfg.Routing.SessionAffinityReturnHomeAfter))
+	}
 	if !reflect.DeepEqual(oldCfg.Payload, newCfg.Payload) {
 		changes = appendPayloadConfigChanges(changes, oldCfg.Payload, newCfg.Payload)
 	}

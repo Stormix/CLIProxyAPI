@@ -914,6 +914,29 @@ type SessionAffinitySelector struct {
 	cache            *SessionCache
 	matcher          *cliproxysession.MerklePrefixMatcher
 	subagentAffinity bool
+	scope            SessionAffinityScope
+	returnHome       bool
+	returnHomeAfter  time.Duration
+}
+
+// SessionAffinityScope controls whether bindings are keyed per session+model or per session.
+type SessionAffinityScope string
+
+const (
+	// SessionAffinityScopeSessionModel binds each session+model pair independently (default).
+	SessionAffinityScopeSessionModel SessionAffinityScope = "session-model"
+	// SessionAffinityScopeSession binds a session to one credential regardless of model.
+	SessionAffinityScopeSession SessionAffinityScope = "session"
+)
+
+// ParseSessionAffinityScope normalizes a configured scope, defaulting to session-model.
+func ParseSessionAffinityScope(raw string) SessionAffinityScope {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "session":
+		return SessionAffinityScopeSession
+	default:
+		return SessionAffinityScopeSessionModel
+	}
 }
 
 // SessionAffinityConfig configures the session affinity selector.
@@ -921,6 +944,14 @@ type SessionAffinityConfig struct {
 	Fallback         Selector
 	TTL              time.Duration
 	SubagentAffinity *bool
+	// PersistPath, when non-empty, loads bindings from and periodically snapshots them to this file.
+	PersistPath string
+	// Scope selects the cache key granularity; empty means session-model.
+	Scope SessionAffinityScope
+	// ReturnHome re-binds a failed-over session to its original credential once available
+	// again and idle on the failover credential for ReturnHomeAfter (default 10m).
+	ReturnHome      bool
+	ReturnHomeAfter time.Duration
 }
 
 // NewSessionAffinitySelector creates a new session-aware selector.
@@ -943,12 +974,28 @@ func NewSessionAffinitySelectorWithConfig(cfg SessionAffinityConfig) *SessionAff
 	if cfg.SubagentAffinity != nil {
 		subagentAffinity = *cfg.SubagentAffinity
 	}
+	if cfg.ReturnHomeAfter <= 0 {
+		cfg.ReturnHomeAfter = 10 * time.Minute
+	}
+	cache := NewSessionCache(cfg.TTL)
+	cache.EnablePersistence(cfg.PersistPath, 0)
 	return &SessionAffinitySelector{
 		fallback:         cfg.Fallback,
-		cache:            NewSessionCache(cfg.TTL),
+		cache:            cache,
 		matcher:          cliproxysession.NewMerklePrefixMatcher(cfg.TTL),
 		subagentAffinity: subagentAffinity,
+		scope:            ParseSessionAffinityScope(string(cfg.Scope)),
+		returnHome:       cfg.ReturnHome,
+		returnHomeAfter:  cfg.ReturnHomeAfter,
 	}
+}
+
+// cacheKey builds the session cache key honoring the configured scope.
+func (s *SessionAffinitySelector) cacheKey(provider, sessionID, modelKey string) string {
+	if s != nil && s.scope == SessionAffinityScopeSession {
+		return provider + "::" + sessionID
+	}
+	return provider + "::" + sessionID + "::" + modelKey
 }
 
 // Trees returns a backward-compatible in-memory session tree store.
@@ -1036,7 +1083,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	fallbackAuths := highestPriorityAuths(available)
 
 	modelKey := canonicalModelKey(model)
-	cacheKey := provider + "::" + primaryID + "::" + modelKey
+	cacheKey := s.cacheKey(provider, primaryID, modelKey)
 	isFork := false
 	if opts.Metadata != nil {
 		if forkFlag, ok := opts.Metadata[cliproxyexecutor.IsForkMetadataKey].(bool); ok && forkFlag {
@@ -1046,7 +1093,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	isSubagent := !isFork && isSubagentSession(primaryID, fallbackID)
 	fallbackKey := ""
 	if fallbackID != "" && fallbackID != primaryID {
-		fallbackKey = provider + "::" + fallbackID + "::" + modelKey
+		fallbackKey = s.cacheKey(provider, fallbackID, modelKey)
 	}
 	bind := func(authID string) {
 		if fallbackKey != "" && !isSubagent && !isFork {
@@ -1057,6 +1104,11 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	}
 
 	if cachedAuthID, ok := s.cache.GetAndRefresh(cacheKey); ok {
+		if home := s.returnHomeAuth(cacheKey, cachedAuthID, available); home != nil {
+			bind(home.ID)
+			entry.Infof("session-affinity: returning to home auth | session=%s auth=%s from=%s provider=%s model=%s", truncateSessionID(primaryID), home.ID, cachedAuthID, provider, model)
+			return home, nil
+		}
 		for _, auth := range available {
 			if auth.ID == cachedAuthID {
 				bind(auth.ID)
@@ -1064,6 +1116,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 				return auth, nil
 			}
 		}
+		homeID := s.homeAuthIDForFailover(cacheKey, cachedAuthID)
 		// Cached auth not available, reselect via fallback selector for even distribution
 		auth, err := s.fallback.Pick(ctx, provider, model, opts, fallbackAuths)
 		if err != nil {
@@ -1073,6 +1126,9 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 			return nil, nil
 		}
 		bind(auth.ID)
+		if homeID != "" && homeID != auth.ID {
+			s.cache.SetHome(cacheKey, homeID)
+		}
 		entry.Infof("session-affinity: cache hit but auth unavailable, reselected | session=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, provider, model)
 		return auth, nil
 	}
@@ -1109,6 +1165,40 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 		entry.Infof("session-affinity: cache miss, new binding | session=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, provider, model)
 	}
 	return auth, nil
+}
+
+// homeAuthIDForFailover returns the credential to remember as home when the session
+// bound to currentAuthID fails over: the existing home if one is recorded, else currentAuthID.
+func (s *SessionAffinitySelector) homeAuthIDForFailover(cacheKey, currentAuthID string) string {
+	if s == nil || !s.returnHome {
+		return ""
+	}
+	if binding, ok := s.cache.Binding(cacheKey); ok && binding.HomeAuthID != "" {
+		return binding.HomeAuthID
+	}
+	return currentAuthID
+}
+
+// returnHomeAuth reports the home credential to re-bind to when return-home is enabled,
+// the session recorded a home other than its current credential, that home is available
+// again, and the session has been idle on the failover credential for at least returnHomeAfter.
+func (s *SessionAffinitySelector) returnHomeAuth(cacheKey, currentAuthID string, available []*Auth) *Auth {
+	if s == nil || !s.returnHome {
+		return nil
+	}
+	binding, ok := s.cache.Binding(cacheKey)
+	if !ok || binding.HomeAuthID == "" || binding.HomeAuthID == currentAuthID {
+		return nil
+	}
+	if s.cache.clock().Sub(binding.LastUsed) < s.returnHomeAfter {
+		return nil
+	}
+	for _, auth := range available {
+		if auth != nil && auth.ID == binding.HomeAuthID {
+			return auth
+		}
+	}
+	return nil
 }
 
 func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth, entry *log.Entry) (*Auth, bool, error) {
@@ -1407,7 +1497,7 @@ func (s *SessionAffinitySelector) LookupAffinity(provider, model, sessionID stri
 	for _, candProvider := range providers {
 		for _, cand := range candidates {
 			bounded := cliproxysession.BoundSessionIdentity(cand)
-			key := candProvider + "::" + bounded + "::" + modelKey
+			key := s.cacheKey(candProvider, bounded, modelKey)
 			if authID, ok := s.cache.Get(key); ok && authID != "" {
 				if authFilter != nil && !authFilter(authID) {
 					continue
@@ -1532,10 +1622,10 @@ func (s *SessionAffinitySelector) OnResult(res Result) {
 		fallbackID = cliproxysession.BoundSessionIdentity(fallbackID)
 	}
 
-	cacheKey := ns + "::" + primaryID + "::" + nsModel
+	cacheKey := s.cacheKey(ns, primaryID, nsModel)
 	var fallbackKey string
 	if fallbackID != "" && fallbackID != primaryID && !isSubagentSession(primaryID, fallbackID) {
-		fallbackKey = ns + "::" + fallbackID + "::" + nsModel
+		fallbackKey = s.cacheKey(ns, fallbackID, nsModel)
 	}
 	if res.Success {
 		s.cache.Touch(cacheKey, res.AuthID)

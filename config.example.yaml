@@ -148,6 +148,19 @@ routing:
   # for maximum parallel concurrency.
   # Ignored when routing.session-affinity is false.
   session-affinity-subagents: true
+  # Persist session-to-auth bindings to <auth-dir>/session-affinity.json (snapshot every 30s when
+  # changed and on shutdown; restored on startup and after config reload) so restarts do not
+  # scatter established sessions across credentials. Ignored when session-affinity is false.
+  session-affinity-persist: false # default: false
+  # Binding granularity: "session-model" (default) binds each session+model pair separately;
+  # "session" binds a session to one credential regardless of the requested model.
+  session-affinity-scope: "session-model"
+  # When a bound credential is unavailable (cooldown/quota) the session fails over to another
+  # credential. With return-home enabled the original credential is remembered and the session
+  # re-binds to it once it is available again and the session has been idle on the failover
+  # credential for at least session-affinity-return-home-after. Ignored when session-affinity is false.
+  session-affinity-return-home: false # default: false
+  session-affinity-return-home-after: "10m" # default: 10m
 
   # When true, unprefixed model requests only use credentials without a prefix (except when prefix == model name).
   force-model-prefix: false
