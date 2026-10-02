@@ -381,8 +381,9 @@ type RoutingConfig struct {
 // headers observed on upstream responses.
 type SoonestResetRoutingConfig struct {
 	// Window selects which quota window drives ordering.
-	// "auto" (default) uses the window closest to exhaustion; "primary" the short window
-	// (Codex 5h, Claude 5h); "secondary" the long window (Codex weekly, Claude 7d).
+	// "auto" (default) uses the window closest to exhaustion; "primary" the Codex primary
+	// or Claude 5h window; "secondary" the Codex secondary or Claude 7d window. Codex plans
+	// with a single weekly limit report it as the primary window.
 	Window string `yaml:"window,omitempty" json:"window,omitempty"`
 
 	// SkipExhaustedAbove is the used-percent at or above which a window is considered

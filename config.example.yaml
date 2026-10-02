@@ -133,7 +133,7 @@ routing:
   # about to be refreshed is spent first; the credential with the furthest reset is kept in
   # reserve. Only consulted for cold sessions and failover when session-affinity is on.
   # soonest-reset:
-  #   window: auto # auto (window closest to exhaustion) | primary (5h) | secondary (weekly/7d)
+  #   window: auto # auto (window closest to exhaustion) | primary (Codex primary, Claude 5h) | secondary (Codex secondary, Claude 7d)
   #   skip-exhausted-above: 95 # used-percent at/above which a window counts as exhausted (ordered last)
   #   stale-after: "30m" # ignore quota signals older than this; credential becomes "unknown"
   #   unknown-policy: probe # probe (try unknowns first, round-robin, to capture headers) | last

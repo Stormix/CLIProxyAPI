@@ -11,9 +11,10 @@ import (
 const (
 	// SoonestResetWindowAuto picks the quota window that is closest to exhaustion.
 	SoonestResetWindowAuto = "auto"
-	// SoonestResetWindowPrimary only considers the short window (Codex 5h, Claude 5h).
+	// SoonestResetWindowPrimary only considers the Codex primary or Claude 5h window.
+	// Codex plans with a single weekly limit report it as the primary window.
 	SoonestResetWindowPrimary = "primary"
-	// SoonestResetWindowSecondary only considers the long window (Codex weekly, Claude 7d).
+	// SoonestResetWindowSecondary only considers the Codex secondary or Claude 7d window.
 	SoonestResetWindowSecondary = "secondary"
 
 	// SoonestResetUnknownProbe orders credentials without a usable reset signal first so
