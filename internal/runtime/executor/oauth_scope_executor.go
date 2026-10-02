@@ -54,11 +54,14 @@ func (e XAIWebsocketsExecutor) ForAPIKey() cliproxyauth.ProviderExecutor {
 }
 
 func (e CodexAutoExecutor) ForAPIKey() cliproxyauth.ProviderExecutor {
+	e.cfg = e.cfg.ForAPIKey()
 	if e.httpExec != nil {
 		e.httpExec = e.httpExec.ForAPIKey().(*CodexExecutor)
+		e.httpTransport = e.httpExec
 	}
 	if e.wsExec != nil {
 		e.wsExec = e.wsExec.ForAPIKey().(*CodexWebsocketsExecutor)
+		e.wsTransport = e.wsExec
 	}
 	return &e
 }

@@ -155,6 +155,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if oldCfg.Codex.OrphanDelegationCompatibility != newCfg.Codex.OrphanDelegationCompatibility {
 		changes = append(changes, fmt.Sprintf("codex.orphan-delegation-compatibility: %t -> %t", oldCfg.Codex.OrphanDelegationCompatibility, newCfg.Codex.OrphanDelegationCompatibility))
 	}
+	if oldCfg.Codex.WebsocketsForHTTPClients != newCfg.Codex.WebsocketsForHTTPClients {
+		changes = append(changes, fmt.Sprintf("codex.websockets-for-http-clients: %t -> %t", oldCfg.Codex.WebsocketsForHTTPClients, newCfg.Codex.WebsocketsForHTTPClients))
+	}
 	if oldCfg.XAI.InjectXSearch != newCfg.XAI.InjectXSearch {
 		changes = append(changes, fmt.Sprintf("xai.inject-x-search: %t -> %t", oldCfg.XAI.InjectXSearch, newCfg.XAI.InjectXSearch))
 	}
